@@ -1,292 +1,382 @@
 import streamlit as st
+import json
+import os
+import pandas as pd
 from datetime import datetime
+from fpdf import FPDF
 
-# ---------------------------------------------------------
-# 1. セッション状態の初期化 (データ保持のため)
-# ---------------------------------------------------------
-if "form_data" not in st.session_state:
-    st.session_state.form_data = {
-        "client_name": "",
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        # 仮説
-        "initial_hypothesis": "",
-        # 地盤
-        "bedrock_values": "",
-        "bedrock_notes": "",
-        # 堆積物
-        "sediment_status": "",
-        "sediment_notes": "",
-        # 地形
-        "topo_cliff": "",
-        "topo_slope": "",
-        "topo_notes": "",
-        # 航路
-        "route_goal": "",
-        "route_action": "",
-        "route_notes": "",
-        # 全体総評
-        "summary": ""
-    }
+# ==========================================
+# 0. 初期設定 & データ管理
+# ==========================================
+st.set_page_config(layout="wide", page_title="Life Mapping Console v7")
 
-# ---------------------------------------------------------
-# 2. サイドバー設定
-# ---------------------------------------------------------
-st.sidebar.title("🧭 Life Mapping Console")
-st.sidebar.markdown("---")
+DATA_DIR = "data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-# メニュー選択
-menu = st.sidebar.radio(
-    "フェーズ選択",
-    ["0. 基本情報 & 仮説", "1. 地盤調査 (Bedrock)", "2. 堆積物確認 (Sediment)", "3. 地形測量 (Topography)", "4. 航路策定 (Routes)", "5. アウトプット生成"]
-)
+DEFAULT_DATA = {
+    "name": "",
+    "date": datetime.now().strftime("%Y-%m-%d"),
+    "temp_pin": "",
+    "bedrock": "",
+    "bedrock_note": "",
+    "sediment": "",
+    "sediment_note": "",
+    "cliff": "",
+    "slope": "",
+    "goal": "",
+    "action": ""
+}
 
-# カンペ：4タイプ診断
-with st.sidebar.expander("🔍 4タイプ診断リファレンス"):
-    st.markdown("""
-    **① 白地図タイプ**
-    * 未来が見えない / 過去を掘る
-    **② 遭難中タイプ**
-    * ゴールはあるが動けない / 重りを外す
-    **③ 現状埋没タイプ**
-    * 忙殺・思考停止 / 延長線の先を見せる
-    **④ 登山口タイプ**
-    * 恐怖で一歩が出ない / 崖を坂にする
-    """)
+if "data" not in st.session_state:
+    st.session_state.data = DEFAULT_DATA.copy()
+else:
+    for key, value in DEFAULT_DATA.items():
+        if key not in st.session_state.data:
+            st.session_state.data[key] = value
 
-# ---------------------------------------------------------
-# 3. メイン画面ロジック
-# ---------------------------------------------------------
+# --- ⚡️ オートセーブ関数 ---
+def auto_save():
+    if not st.session_state.data["name"]:
+        filename = "autosave_draft.json"
+    else:
+        filename = f"{st.session_state.data['name']}_{st.session_state.data['date']}.json"
+    
+    filepath = os.path.join(DATA_DIR, filename)
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(st.session_state.data, f, ensure_ascii=False, indent=4)
+        st.toast(f"💾 Auto-saved: {filename}", icon="✅")
+    except Exception as e:
+        print(f"Auto-save failed: {e}")
 
+# --- 読み込み & 削除関数 ---
+def load_data(filename):
+    filepath = os.path.join(DATA_DIR, filename)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            loaded_data = json.load(f)
+            new_data = DEFAULT_DATA.copy()
+            new_data.update(loaded_data)
+            st.session_state.data = new_data
+        st.sidebar.success(f"📂 読み込み完了: {filename}")
+    except Exception as e:
+        st.sidebar.error(f"読み込みエラー: {e}")
+
+def delete_data(filename):
+    filepath = os.path.join(DATA_DIR, filename)
+    try:
+        os.remove(filepath)
+        st.success(f"🗑️ 削除しました: {filename}")
+        return True
+    except Exception as e:
+        st.error(f"削除エラー: {e}")
+        return False
+
+def get_saved_files():
+    files = [f for f in os.listdir(DATA_DIR) if f.endswith('.json')]
+    return sorted(files, reverse=True)
+
+# ==========================================
+# 📄 PDF生成クラス (日本語対応)
+# ==========================================
+class PDFReport(FPDF):
+    def header(self):
+        # 日本語フォントの読み込み (app.pyと同じ場所に font.ttf を置くこと！)
+        font_path = "font.ttf" 
+        if os.path.exists(font_path):
+            self.add_font('Japanese', '', font_path)
+            self.set_font('Japanese', '', 10)
+        else:
+            self.set_font('Arial', '', 10)
+        
+        self.cell(0, 10, 'Life Mapping Fieldwork Log', align='R')
+        self.ln(15)
+
+    def chapter_title(self, label):
+        self.set_font_size(14)
+        self.set_fill_color(240, 242, 246) # 薄いグレー
+        self.cell(0, 10, f"  {label}", fill=True, ln=True)
+        self.ln(4)
+
+    def chapter_body(self, text):
+        self.set_font_size(11)
+        self.multi_cell(0, 7, text)
+        self.ln(8)
+
+    def card_body(self, title, content):
+        self.set_font_size(10)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 6, title, ln=True)
+        self.set_text_color(0, 0, 0)
+        self.set_font_size(12)
+        self.multi_cell(0, 7, content, border='L')
+        self.ln(6)
+
+def generate_pdf(data):
+    pdf = PDFReport()
+    pdf.add_page()
+    
+    # フォントチェック
+    if not os.path.exists("font.ttf"):
+        st.error("⚠️ 日本語フォント(font.ttf)が見つかりません。PDFが文字化けする可能性があります。")
+        pdf.set_font("Arial", size=12)
+    else:
+        pdf.set_font("Japanese", size=12)
+
+    # タイトル
+    pdf.set_font_size(24)
+    pdf.cell(0, 15, f"{data['name']}'s Fieldwork Log", ln=True, align='C')
+    pdf.set_font_size(12)
+    pdf.cell(0, 10, f"Date: {data['date']}", ln=True, align='C')
+    pdf.ln(10)
+
+    # Phase 1
+    pdf.chapter_title("1. Bedrock (地盤・価値観)")
+    pdf.chapter_body(data['bedrock'])
+    
+    # Phase 2
+    pdf.chapter_title("2. Sediment (スキル・経験)")
+    pdf.chapter_body(data['sediment'])
+
+    # Phase 3
+    pdf.chapter_title("3. Topography (地形再定義)")
+    pdf.card_body("😱 Cliff (崖に見えているもの)", data['cliff'])
+    pdf.card_body("🚶 Slope (登れる坂への再定義)", data['slope'])
+
+    # Phase 4
+    pdf.chapter_title("4. Routes (航路)")
+    pdf.card_body("🏁 Destination (3ヶ月後のゴール)", data['goal'])
+    pdf.card_body("👟 Next Action (最初の一歩)", data['action'])
+
+    return pdf.output(dest='S').encode('latin-1')
+
+# ==========================================
+# 1. サイドバー
+# ==========================================
+with st.sidebar:
+    st.title("🧭 Mapping Console")
+    st.caption("v7.0: PDF & CSV Export")
+    
+    app_mode = st.radio("App Mode", ["📝 セッション実施 (Edit)", "📂 過去ログ管理 (Archives)"])
+    st.divider()
+
+    if app_mode == "📝 セッション実施 (Edit)":
+        menu = st.radio("フェーズ選択", [
+            "0. 基本情報 (Setup)",
+            "1. 地盤調査 (Bedrock)",
+            "2. 堆積物確認 (Sediment)",
+            "3. 地形測量 (Topography)",
+            "4. 航路策定 (Routes)",
+            "5. クライアント出力 (View)"
+        ])
+        
+        st.divider()
+        st.subheader("💾 Data Control")
+        if st.button("Force Save"):
+            auto_save()
+            st.success("Saved!")
+        
+        saved_files = get_saved_files()
+        if saved_files:
+            selected_file = st.selectbox("Load Past Record", saved_files)
+            if st.button("Load Selected"):
+                load_data(selected_file)
+                st.rerun()
+
+# ==========================================
+# 2. メイン画面
+# ==========================================
 def section_header(title, purpose, questions):
-    """共通ヘッダー表示関数"""
     st.title(title)
     st.info(f"**【目的】** {purpose}")
-    with st.expander("🗣️ 参謀の問い（スクリプト）", expanded=True):
+    with st.expander("🗣️ 参謀の問い", expanded=True):
         for q in questions:
-            st.write(f"- {q}")
+            st.markdown(f"- {q}")
     st.markdown("---")
 
-# === 0. 基本情報 & 仮説 ===
-if menu == "0. 基本情報 & 仮説":
-    st.title("📋 基本情報 & 仮説設定")
-    st.write("クライアントの基本情報と、現時点で見えている「仮のゴール」を確認します。")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state.form_data["client_name"] = st.text_input(
-            "クライアント氏名", 
-            value=st.session_state.form_data["client_name"]
-        )
-    with col2:
-        st.session_state.form_data["date"] = st.text_input(
-            "実施日", 
-            value=st.session_state.form_data["date"]
-        )
-    
-    st.markdown("---")
-    st.subheader("📍 仮説としてのゴール (Hypothesis)")
-    st.warning("⚠️ **注意**: これはあくまで「仮のピン」です。この後の地盤調査で変わる可能性が高いことを伝えてください。")
-    
-    st.session_state.form_data["initial_hypothesis"] = st.text_area(
-        "Q. 現時点で「こうなりたい」と思っていること、または「進みたい方角」は？",
-        value=st.session_state.form_data["initial_hypothesis"],
-        placeholder="例：今の会社を辞めて独立したい、もっと自由な時間が欲しい...（あくまで仮説！）"
-    )
+if app_mode == "📝 セッション実施 (Edit)":
 
-# === 1. 地盤調査 ===
-elif menu == "1. 地盤調査 (Bedrock)":
-    section_header(
-        "🪨 Phase 1: 地盤調査 (Bedrock)",
-        "表面的な悩みの下にある、決して変わらない『価値観』や『源泉』を特定する。",
-        [
-            "今の仕事で『無意識にできてしまう（ストレスがない）』瞬間は？",
-            "逆に、『これだけは絶対にやりたくない』『許せない』ことは？",
-            "過去に一番『自分最強』と感じたエピソードは？",
-            "その『やりたい』は、純粋なワクワク？ それとも焦り？"
-        ]
-    )
-    
-    st.session_state.form_data["bedrock_values"] = st.text_area(
-        "✍️ 地盤・価値観 (Core Beliefs)",
-        value=st.session_state.form_data["bedrock_values"],
-        height=150,
-        placeholder="例：構造化することへの執着、自由であること、嘘をつかないこと..."
-    )
-    st.session_state.form_data["bedrock_notes"] = st.text_area(
-        "📝 特記事項・メモ",
-        value=st.session_state.form_data["bedrock_notes"],
-        height=100
-    )
-
-# === 2. 堆積物確認 ===
-elif menu == "2. 堆積物確認 (Sediment)":
-    section_header(
-        "🧱 Phase 2: 堆積物確認 (Sediment)",
-        "現在地を形成している『スキル』『経験』『しがらみ』を棚卸しする。",
-        [
-            "今の肩書きや役割を、一度すべて書き出してみましょう。",
-            "持っているけれど『もう使いたくないスキル』はありますか？",
-            "逆に、もっと磨きたい『武器』はどれですか？",
-            "足首を掴んでいる『ツタ（しがらみ）』の正体は何ですか？"
-        ]
-    )
-    
-    st.session_state.form_data["sediment_status"] = st.text_area(
-        "✍️ 堆積物・現状 (Current Status)",
-        value=st.session_state.form_data["sediment_status"],
-        height=150,
-        placeholder="例：マネジメント経験、医療業界の知識、XXの資格... / でも実はXXには飽きている"
-    )
-    st.session_state.form_data["sediment_notes"] = st.text_area(
-        "📝 特記事項・メモ",
-        value=st.session_state.form_data["sediment_notes"],
-        height=100
-    )
-
-# === 3. 地形測量 ===
-elif menu == "3. 地形測量 (Topography)":
-    section_header(
-        "🧗 Phase 3: 地形測量 (Topography)",
-        "クライアントが『崖（不可能）』と感じているものを、『坂（タスク）』に再定義する。",
-        [
-            "その一歩目が『怖い』のは、具体的に何が起きると思っているから？",
-            "それは『能力的に登れない崖』？ それとも『装備があれば登れる急斜面』？",
-            "最悪のケース、失敗したらどうなりますか？（元の場所に戻るだけでは？）"
-        ]
-    )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state.form_data["topo_cliff"] = st.text_area(
-            "😱 崖に見えているもの (Fear)",
-            value=st.session_state.form_data["topo_cliff"],
-            placeholder="例：独立したら収入がゼロになる恐怖、批判される恐怖"
-        )
-    with col2:
-        st.session_state.form_data["topo_slope"] = st.text_area(
-            "🚶 登れる坂への再定義 (Task)",
-            value=st.session_state.form_data["topo_slope"],
-            placeholder="例：まずは副業で月5万稼ぐ、批判は『認知された証拠』と捉える"
-        )
+    # === 0. Setup ===
+    if menu == "0. 基本情報 (Setup)":
+        st.title("📋 基本情報のセットアップ")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.text_input("Client Name", key="name_input", value=st.session_state.data["name"], 
+                        on_change=lambda: [st.session_state.data.update({"name": st.session_state.name_input}), auto_save()])
+        with col2:
+            st.text_input("Date", key="date_input", value=st.session_state.data["date"],
+                        on_change=lambda: [st.session_state.data.update({"date": st.session_state.date_input}), auto_save()])
         
-    st.session_state.form_data["topo_notes"] = st.text_area(
-        "📝 特記事項・メモ",
-        value=st.session_state.form_data["topo_notes"],
-        height=100
-    )
+        st.divider()
+        st.subheader("📍 仮ピン（現時点での目標・仮説）")
+        st.text_area("Temporary Goal", key="temp_pin_input", value=st.session_state.data["temp_pin"], height=100, label_visibility="collapsed",
+                     on_change=lambda: [st.session_state.data.update({"temp_pin": st.session_state.temp_pin_input}), auto_save()])
 
-# === 4. 航路策定 ===
-elif menu == "4. 航路策定 (Routes)":
-    section_header(
-        "🚩 Phase 4: 航路策定 (Routes)",
-        "地質調査を経て、改めて『目的地』を定義し、明日踏み出す『最初の一歩』を決める。",
-        [
-            "最初の『仮説ゴール』と比べて、行きたい場所は変わりましたか？",
-            "3ヶ月後、最低限『これだけは変わっていたい』という景色は？",
-            "そのために、明日スマホで最初に何を検索しますか？"
-        ]
-    )
-    
-    # 仮説の振り返り表示
-    with st.expander("🔙 最初に立てた仮説（Hypothesis）を確認する", expanded=True):
-        st.write(f"**当初の想い:** {st.session_state.form_data['initial_hypothesis']}")
-        st.caption("👆この仮説は「他人の地図」でしたか？ それとも「自分の地盤」に合っていましたか？")
+    # === 1. Bedrock ===
+    elif menu == "1. 地盤調査 (Bedrock)":
+        section_header("🪨 Phase 1: 地盤調査", "価値観や原動力を特定する。", ["無意識にできてしまうことは？", "絶対に許せないことは？"])
+        st.text_area("✍️ 譲れない価値観", key="bedrock_input", value=st.session_state.data["bedrock"], height=200,
+                    on_change=lambda: [st.session_state.data.update({"bedrock": st.session_state.bedrock_input}), auto_save()])
+        st.text_area("📝 メモ", key="bedrock_note_input", value=st.session_state.data.get("bedrock_note", ""), height=100,
+                    on_change=lambda: [st.session_state.data.update({"bedrock_note": st.session_state.bedrock_note_input}), auto_save()])
 
-    st.markdown("---")
-    
-    st.session_state.form_data["route_goal"] = st.text_area(
-        "🏁 再定義された3ヶ月後のゴール (Defined Destination)",
-        value=st.session_state.form_data["route_goal"],
-        placeholder="例：サービスをローンチして最初の1円を稼ぐ"
-    )
-    st.session_state.form_data["route_action"] = st.text_area(
-        "👟 Next Action (Baby Step)",
-        value=st.session_state.form_data["route_action"],
-        placeholder="例：明日10時にXXさんにアポのLINEを送る"
-    )
-    st.session_state.form_data["route_notes"] = st.text_area(
-        "📝 特記事項・メモ",
-        value=st.session_state.form_data["route_notes"],
-        height=100
-    )
+    # === 2. Sediment ===
+    elif menu == "2. 堆積物確認 (Sediment)":
+        section_header("🧱 Phase 2: 堆積物確認", "スキルやしがらみを棚卸しする。", ["今の肩書きは？", "もう使いたくないスキルは？"])
+        st.text_area("✍️ スキル・肩書き", key="sediment_input", value=st.session_state.data["sediment"], height=200,
+                    on_change=lambda: [st.session_state.data.update({"sediment": st.session_state.sediment_input}), auto_save()])
 
-# === 5. アウトプット生成 ===
-elif menu == "5. アウトプット生成":
-    st.title("📄 Strategy Map 生成")
-    st.write("入力内容をまとめ、ドキュメントとして出力します。")
-    
-    st.session_state.form_data["summary"] = st.text_area(
-        "💬 参謀からのメッセージ (Feedback)",
-        value=st.session_state.form_data["summary"],
-        height=100,
-        placeholder="例：あなたは遭難していません。ただ装備が重すぎただけです。この地図を持って進みましょう。"
-    )
-    
-    # テキストデータの整形
-    output_text = f"""
-================================================
-Life Mapping Strategy Report
-================================================
-■ Client: {st.session_state.form_data['client_name']} 様
-■ Date  : {st.session_state.form_data['date']}
-■ Strategist: Nozomi Yoneyama
+    # === 3. Topography ===
+    elif menu == "3. 地形測量 (Topography)":
+        section_header("🧗 Phase 3: 地形測量", "『崖』を『坂』に再定義する。", ["何が怖い？", "失敗したらどうなる？"])
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("😱 崖に見えているもの")
+            st.text_area("Cliff", key="cliff_input", value=st.session_state.data["cliff"], label_visibility="collapsed", height=150, 
+                        on_change=lambda: [st.session_state.data.update({"cliff": st.session_state.cliff_input}), auto_save()])
+        with col2:
+            st.subheader("🚶 登れる坂への再定義")
+            st.text_area("Slope", key="slope_input", value=st.session_state.data["slope"], label_visibility="collapsed", height=150,
+                        on_change=lambda: [st.session_state.data.update({"slope": st.session_state.slope_input}), auto_save()])
 
-------------------------------------------------
-0. INITIAL HYPOTHESIS (当初の仮説)
-------------------------------------------------
-{st.session_state.form_data['initial_hypothesis']}
+    # === 4. Routes ===
+    elif menu == "4. 航路策定 (Routes)":
+        section_header("🚩 Phase 4: 航路策定", "3ヶ月後の目的地を決める。", ["最低限どうなっていたい？", "明日何をする？"])
+        st.text_area("🏁 3ヶ月後のゴール", key="goal_input", value=st.session_state.data["goal"], height=100,
+                    on_change=lambda: [st.session_state.data.update({"goal": st.session_state.goal_input}), auto_save()])
+        st.text_area("👟 Next Action", key="action_input", value=st.session_state.data["action"], height=100,
+                    on_change=lambda: [st.session_state.data.update({"action": st.session_state.action_input}), auto_save()])
 
-------------------------------------------------
-1. BEDROCK (地盤・価値観)
-------------------------------------------------
-{st.session_state.form_data['bedrock_values']}
+    # === 5. View (Export機能追加) ===
+    elif menu == "5. クライアント出力 (View)":
+        if not st.session_state.data["name"]:
+            st.warning("名前を入力してください。")
+        else:
+            st.title(f"🗺️ {st.session_state.data['name']}'s Fieldwork Log")
+            
+            # --- Export Buttons ---
+            col_dl1, col_dl2 = st.columns(2)
+            
+            # PDF Download
+            with col_dl1:
+                try:
+                    pdf_bytes = generate_pdf(st.session_state.data)
+                    st.download_button(
+                        label="📄 PDFレポートをダウンロード",
+                        data=pdf_bytes,
+                        file_name=f"{st.session_state.data['name']}_LifeMap.pdf",
+                        mime='application/pdf',
+                        type="primary"
+                    )
+                except Exception as e:
+                    st.error(f"PDF生成エラー: {e}")
+                    st.caption("※フォルダに日本語フォント(font.ttf)があるか確認してください。")
 
-[Memo]
-{st.session_state.form_data['bedrock_notes']}
+            # CSV Download
+            with col_dl2:
+                df = pd.DataFrame([st.session_state.data])
+                csv = df.to_csv(index=False).encode('utf-8_sig') # 文字化け防止でutf-8_sig
+                st.download_button(
+                    label="📊 CSVデータをダウンロード",
+                    data=csv,
+                    file_name=f"{st.session_state.data['name']}_data.csv",
+                    mime='text/csv'
+                )
+            
+            st.markdown("---")
 
-------------------------------------------------
-2. SEDIMENT (堆積物・現状)
-------------------------------------------------
-{st.session_state.form_data['sediment_status']}
+            # 以下、表示ロジック（変更なし）
+            st.markdown("""
+            <style>
+            .badge { background-color: #e3f2fd; color: #1565c0; padding: 5px 12px; border-radius: 15px; border: 1px solid #90caf9; margin: 4px; display: inline-block; font-weight: bold; }
+            .core { background-color: #fff3e0; color: #ef6c00; border: 1px solid #ffcc80; }
+            .flow-box { width: 90%; padding: 15px; border-radius: 8px; margin: 10px auto; box-shadow: 0 2px 5px rgba(0,0,0,0.05); font-family: 'Meiryo', sans-serif; background-color: #fff; }
+            .box-title { font-size: 0.8em; color: #888; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
+            .box-content { font-size: 1.1em; font-weight: bold; color: #333; }
+            .arrow { text-align: center; font-size: 20px; color: #ccc; margin: -5px 0; }
+            .section-inventory { background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+            </style>
+            """, unsafe_allow_html=True)
 
-[Memo]
-{st.session_state.form_data['sediment_notes']}
+            st.subheader("🎒 Inventory")
+            skills = st.session_state.data["sediment"].split('\n')
+            values = st.session_state.data["bedrock"].split('\n')
+            html = '<div class="section-inventory">'
+            for v in values:
+                if v.strip(): html += f'<span class="badge core">❤️ {v}</span>'
+            for s in skills:
+                if s.strip(): html += f'<span class="badge">💎 {s}</span>'
+            html += "</div>"
+            st.markdown(html, unsafe_allow_html=True)
 
-------------------------------------------------
-3. TOPOGRAPHY (地形の再定義)
-------------------------------------------------
-▼ 崖（恐怖の正体）:
-{st.session_state.form_data['topo_cliff']}
+            st.subheader("🧭 Adventure Map")
+            col_map, col_quest = st.columns([3, 2])
+            with col_map:
+                slope = st.session_state.data["slope"] if st.session_state.data["slope"] else "???"
+                action = st.session_state.data["action"] if st.session_state.data["action"] else "???"
+                goal = st.session_state.data["goal"] if st.session_state.data["goal"] else "???"
+                st.markdown(f"""
+                <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px;">
+                    <div class="flow-box" style="border-left: 5px solid #6c757d;">
+                        <div class="box-title">📍 Current Location</div>
+                        <div class="box-content">ぬるま湯の港 / 迷いの森</div>
+                    </div>
+                    <div class="arrow">⬇️</div>
+                    <div class="flow-box" style="border-left: 5px solid #fbc02d;">
+                        <div class="box-title">🚧 Quest</div>
+                        <div class="box-content">{slope}</div>
+                    </div>
+                    <div class="arrow">⬇️</div>
+                    <div class="flow-box" style="border-left: 5px solid #43a047;">
+                        <div class="box-title">🏃 Next Action</div>
+                        <div class="box-content">{action}</div>
+                    </div>
+                    <div class="arrow">⬇️</div>
+                    <div class="flow-box" style="border-left: 5px solid #e53935;">
+                        <div class="box-title">🏁 Destination</div>
+                        <div class="box-content">{goal}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_quest:
+                st.info(f"**Main Quest:**\n\n{goal}")
+                st.success(f"**Daily Mission:**\n\n{action}")
 
-▼ 坂（具体的タスク）:
-{st.session_state.form_data['topo_slope']}
-
-[Memo]
-{st.session_state.form_data['topo_notes']}
-
-------------------------------------------------
-4. ROUTES (航路・戦略)
-------------------------------------------------
-🏁 3ヶ月後のゴール (Defined Destination):
-{st.session_state.form_data['route_goal']}
-
-👟 Next Action (明日やること):
-{st.session_state.form_data['route_action']}
-
-------------------------------------------------
-★ 参謀からのメッセージ
-------------------------------------------------
-{st.session_state.form_data['summary']}
-
-================================================
-"""
-    
-    st.text_area("プレビュー", value=output_text, height=400)
-    
-    filename = f"StrategyMap_{st.session_state.form_data['client_name']}_{st.session_state.form_data['date']}.txt"
-    st.download_button(
-        label="📥 マップをダウンロード (Text)",
-        data=output_text,
-        file_name=filename,
-        mime="text/plain"
-    )
+# ==========================================
+# 3. Archives
+# ==========================================
+elif app_mode == "📂 過去ログ管理 (Archives)":
+    st.title("📂 Session Archives")
+    files = get_saved_files()
+    if not files:
+        st.info("データなし")
+    else:
+        all_records = []
+        for f in files:
+            path = os.path.join(DATA_DIR, f)
+            try:
+                with open(path, 'r', encoding='utf-8') as json_file:
+                    d = json.load(json_file)
+                    all_records.append(d)
+            except:
+                continue
+        
+        df = pd.DataFrame(all_records)
+        # 一覧表示用にカラムを絞る
+        display_cols = ["name", "date", "goal"]
+        # 存在しないカラムでのエラーを防ぐ
+        existing_cols = [c for c in display_cols if c in df.columns]
+        st.dataframe(df[existing_cols], use_container_width=True)
+        
+        st.divider()
+        st.subheader("🗑️ Delete")
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            file_to_delete = st.selectbox("削除ファイル", files)
+        with c2:
+            st.write("")
+            st.write("")
+            if st.button("❌ 削除"):
+                delete_data(file_to_delete)
+                st.rerun()
