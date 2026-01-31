@@ -8,7 +8,7 @@ from fpdf import FPDF
 # ==========================================
 # 0. 初期設定 & データ管理
 # ==========================================
-st.set_page_config(layout="wide", page_title="Life Mapping Console v7")
+st.set_page_config(layout="wide", page_title="Life Mapping Console v7.1")
 
 DATA_DIR = "data"
 if not os.path.exists(DATA_DIR):
@@ -78,12 +78,13 @@ def get_saved_files():
     return sorted(files, reverse=True)
 
 # ==========================================
-# 📄 PDF生成クラス (日本語対応)
+# 📄 PDF生成クラス (IPAexゴシック対応)
 # ==========================================
 class PDFReport(FPDF):
     def header(self):
-        # 日本語フォントの読み込み (app.pyと同じ場所に font.ttf を置くこと！)
-        font_path = "font.ttf" 
+        # ↓↓↓ ここを変更しました (ipaexg.ttf を指定) ↓↓↓
+        font_path = "ipaexg.ttf" 
+        
         if os.path.exists(font_path):
             self.add_font('Japanese', '', font_path)
             self.set_font('Japanese', '', 10)
@@ -117,9 +118,9 @@ def generate_pdf(data):
     pdf = PDFReport()
     pdf.add_page()
     
-    # フォントチェック
-    if not os.path.exists("font.ttf"):
-        st.error("⚠️ 日本語フォント(font.ttf)が見つかりません。PDFが文字化けする可能性があります。")
+    # フォントチェック (ipaexg.ttf)
+    if not os.path.exists("ipaexg.ttf"):
+        st.error("⚠️ フォント(ipaexg.ttf)が見つかりません。PDFが文字化けする可能性があります。")
         pdf.set_font("Arial", size=12)
     else:
         pdf.set_font("Japanese", size=12)
@@ -149,14 +150,16 @@ def generate_pdf(data):
     pdf.card_body("🏁 Destination (3ヶ月後のゴール)", data['goal'])
     pdf.card_body("👟 Next Action (最初の一歩)", data['action'])
 
-    return pdf.output(dest='S').encode('latin-1')
+    # 【修正ポイント】
+    # encode('latin-1') を削除し、bytearray を bytes に変換して返すだけにする
+    return bytes(pdf.output())
 
 # ==========================================
 # 1. サイドバー
 # ==========================================
 with st.sidebar:
     st.title("🧭 Mapping Console")
-    st.caption("v7.0: PDF & CSV Export")
+    st.caption("v7.1: IPAex Gothic Ready")
     
     app_mode = st.radio("App Mode", ["📝 セッション実施 (Edit)", "📂 過去ログ管理 (Archives)"])
     st.divider()
@@ -271,12 +274,12 @@ if app_mode == "📝 セッション実施 (Edit)":
                     )
                 except Exception as e:
                     st.error(f"PDF生成エラー: {e}")
-                    st.caption("※フォルダに日本語フォント(font.ttf)があるか確認してください。")
+                    st.caption("※フォルダに 'ipaexg.ttf' があるか確認してください。")
 
             # CSV Download
             with col_dl2:
                 df = pd.DataFrame([st.session_state.data])
-                csv = df.to_csv(index=False).encode('utf-8_sig') # 文字化け防止でutf-8_sig
+                csv = df.to_csv(index=False).encode('utf-8_sig')
                 st.download_button(
                     label="📊 CSVデータをダウンロード",
                     data=csv,
@@ -286,7 +289,7 @@ if app_mode == "📝 セッション実施 (Edit)":
             
             st.markdown("---")
 
-            # 以下、表示ロジック（変更なし）
+            # 表示ロジック
             st.markdown("""
             <style>
             .badge { background-color: #e3f2fd; color: #1565c0; padding: 5px 12px; border-radius: 15px; border: 1px solid #90caf9; margin: 4px; display: inline-block; font-weight: bold; }
@@ -363,9 +366,7 @@ elif app_mode == "📂 過去ログ管理 (Archives)":
                 continue
         
         df = pd.DataFrame(all_records)
-        # 一覧表示用にカラムを絞る
         display_cols = ["name", "date", "goal"]
-        # 存在しないカラムでのエラーを防ぐ
         existing_cols = [c for c in display_cols if c in df.columns]
         st.dataframe(df[existing_cols], use_container_width=True)
         
